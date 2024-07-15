@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops.layers.torch import Rearrange
+from src.utils import init_weights
 
 
 class BasicConvClassifier(nn.Module):
@@ -32,6 +33,7 @@ class BasicConvClassifier(nn.Module):
         Returns:
             X ( b, num_classes ): _description_
         """
+
         X = self.blocks(X)
 
         return self.head(X)
@@ -52,7 +54,6 @@ class ConvBlock(nn.Module):
 
         self.conv0 = nn.Conv1d(in_dim, out_dim, kernel_size, padding="same")
         self.conv1 = nn.Conv1d(out_dim, out_dim, kernel_size, padding="same")
-        # self.conv2 = nn.Conv1d(out_dim, out_dim, kernel_size) # , padding="same")
         
         self.batchnorm0 = nn.BatchNorm1d(num_features=out_dim)
         self.batchnorm1 = nn.BatchNorm1d(num_features=out_dim)
@@ -60,6 +61,7 @@ class ConvBlock(nn.Module):
         self.dropout = nn.Dropout(p_drop)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
+
         if self.in_dim == self.out_dim:
             X = self.conv0(X) + X  # skip connection
         else:
@@ -67,10 +69,12 @@ class ConvBlock(nn.Module):
 
         X = F.gelu(self.batchnorm0(X))
 
+        X = self.dropout(X) # ★
+
         X = self.conv1(X) + X  # skip connection
         X = F.gelu(self.batchnorm1(X))
 
-        # X = self.conv2(X)
-        # X = F.glu(X, dim=-2)
-
         return self.dropout(X)
+
+
+

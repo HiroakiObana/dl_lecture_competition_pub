@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torchmetrics import Accuracy
+from torchvision import transforms
 import hydra
 from omegaconf import DictConfig
 import wandb
@@ -16,6 +17,7 @@ from src.utils import set_seed
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def run(args: DictConfig):
+    torch.cuda.empty_cache()
     set_seed(args.seed)
     logdir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     
@@ -26,15 +28,39 @@ def run(args: DictConfig):
     #    Dataloader
     # ------------------
     loader_args = {"batch_size": args.batch_size, "num_workers": args.num_workers}
-    
+
+    train_transform = transforms.Compose(
+        [transforms.ToTensor(),
+        transforms.Normalize(0.5, 0.5)
+        ]
+    )
+
+    valid_transform = transforms.Compose(
+        [transforms.ToTensor(),
+        transforms.Normalize(0.5, 0.5)
+        ]
+    )
+
+    test_transform = transforms.Compose(
+        [transforms.ToTensor(),
+        transforms.Normalize(0.5, 0.5)
+        ]
+    )
+
     train_set = ThingsMEGDataset("train", args.data_dir)
+    train_set.transform = train_transform
     train_loader = torch.utils.data.DataLoader(train_set, shuffle=True, **loader_args)
+
     val_set = ThingsMEGDataset("val", args.data_dir)
+    val_set.transform = valid_transform
     val_loader = torch.utils.data.DataLoader(val_set, shuffle=False, **loader_args)
+
     test_set = ThingsMEGDataset("test", args.data_dir)
+    test_set.transform = test_transform
     test_loader = torch.utils.data.DataLoader(
         test_set, shuffle=False, batch_size=args.batch_size, num_workers=args.num_workers
     )
+
 
     # ------------------
     #       Model
@@ -46,7 +72,8 @@ def run(args: DictConfig):
     # ------------------
     #     Optimizer
     # ------------------
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.05)
 
     # ------------------
     #   Start training
@@ -65,16 +92,25 @@ def run(args: DictConfig):
         for X, y, subject_idxs in tqdm(train_loader, desc="Train"):
             X, y = X.to(args.device), y.to(args.device)
 
-            y_pred = model(X)
+
+            y_pred = model.forward(X) # ★forwardを追加
             
+            # 誤差の計算
             loss = F.cross_entropy(y_pred, y)
+
+            # 訓練の誤差
             train_loss.append(loss.item())
             
+            # 誤差の逆伝播
             optimizer.zero_grad()
             loss.backward()
+
+            # パラメータの更新
             optimizer.step()
             
             acc = accuracy(y_pred, y)
+
+            # 訓練の正確性
             train_acc.append(acc.item())
 
         model.eval()
@@ -82,16 +118,23 @@ def run(args: DictConfig):
             X, y = X.to(args.device), y.to(args.device)
             
             with torch.no_grad():
-                y_pred = model(X)
+                y_pred = model.forward(X) # ★forwardを追加
             
+            # 評価の誤差
             val_loss.append(F.cross_entropy(y_pred, y).item())
+
+            # 評価の正確性
             val_acc.append(accuracy(y_pred, y).item())
 
+        
         print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.3f} | val loss: {np.mean(val_loss):.3f} | val acc: {np.mean(val_acc):.3f}")
+        
+        # model_last.ptを保存
         torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
         if args.use_wandb:
             wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": np.mean(val_loss), "val_acc": np.mean(val_acc)})
         
+        # model_best.ptを保存
         if np.mean(val_acc) > max_val_acc:
             cprint("New best.", "cyan")
             torch.save(model.state_dict(), os.path.join(logdir, "model_best.pt"))
@@ -115,3 +158,4 @@ def run(args: DictConfig):
 
 if __name__ == "__main__":
     run()
+
